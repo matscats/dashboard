@@ -4,6 +4,7 @@ certifi==2025.6.15
 charset-normalizer==3.4.2
 click==8.2.1
 dash==3.0.4
+dash-bootstrap-components==1.6.0
 Flask==3.0.3
 idna==3.10
 importlib_metadata==8.7.0
