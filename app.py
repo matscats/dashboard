@@ -1,20 +1,20 @@
-import dash
+import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
-from dash import dcc, html, Input, Output
 import pandas as pd
 from ucimlrepo import fetch_ucirepo
-import dash_bootstrap_components as dbc
 from functools import lru_cache
 import time
 
-app = dash.Dash(
-    __name__, external_stylesheets=[dbc.themes.BOOTSTRAP, "/assets/style.css"]
+# Configuração da página
+st.set_page_config(
+    page_title="Bank Marketing Campaign Analysis Dashboard",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
 )
-server = app.server
-app.title = "Bank Marketing Campaign Analysis Dashboard"
 
-# Modern color palette
+# Paleta de cores moderna
 COLORS = {
     "primary": "#3498db",
     "secondary": "#2c3e50",
@@ -25,49 +25,79 @@ COLORS = {
     "dark": "#343a40",
 }
 
+# CSS customizado
+st.markdown(
+    """
+<style>
+    .main-header {
+        text-align: center;
+        color: #2c3e50;
+        margin-bottom: 2rem;
+    }
+    .stat-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 1rem;
+    }
+    .stat-value {
+        font-size: 2rem;
+        font-weight: bold;
+        margin-bottom: 0.5rem;
+    }
+    .stat-label {
+        font-size: 0.9rem;
+        opacity: 0.8;
+    }
+    .section-header {
+        color: #2c3e50;
+        border-bottom: 2px solid #3498db;
+        padding-bottom: 0.5rem;
+        margin: 2rem 0 1rem 0;
+    }
+</style>
+""",
+    unsafe_allow_html=True,
+)
+
+
 # Cache global para dados
-_data_cache = {}
-_processed_cache = {}
-
-
+@st.cache_data
 def get_cached_data():
     """Cache dos dados originais do UCI"""
-    if "raw_data" not in _data_cache:
-        print("Carregando dados do UCI...")
-        bank_marketing = fetch_ucirepo(id=222)
-        X = bank_marketing.data.features
-        y = bank_marketing.data.targets
-        df = pd.concat([X, y], axis=1)
+    print("Carregando dados do UCI...")
+    bank_marketing = fetch_ucirepo(id=222)
+    X = bank_marketing.data.features
+    y = bank_marketing.data.targets
+    df = pd.concat([X, y], axis=1)
 
-        # Processamento básico
-        categorical_vars = ["job", "education", "marital", "contact", "poutcome"]
-        df[categorical_vars] = df[categorical_vars].fillna("Missing")
-        df["was_contacted_before"] = df["pdays"].apply(
-            lambda x: False if x == -1 else True
-        )
-        df["y_numeric"] = df["y"].map({"yes": 1, "no": 0})
+    # Processamento básico
+    categorical_vars = ["job", "education", "marital", "contact", "poutcome"]
+    df[categorical_vars] = df[categorical_vars].fillna("Missing")
+    df["was_contacted_before"] = df["pdays"].apply(lambda x: False if x == -1 else True)
+    df["y_numeric"] = df["y"].map({"yes": 1, "no": 0})
 
-        _data_cache["raw_data"] = df
-        print("Dados carregados e processados!")
-
-    return _data_cache["raw_data"]
+    print("Dados carregados e processados!")
+    return df
 
 
-@lru_cache(maxsize=32)
+@st.cache_data
 def get_frequency_data(column):
     """Cache para dados de frequência"""
     df = get_cached_data()
     return df[column].value_counts()
 
 
-@lru_cache(maxsize=32)
+@st.cache_data
 def get_adhesion_rate(column):
     """Cache para taxa de adesão"""
     df = get_cached_data()
     return df.groupby(column)["y_numeric"].mean().sort_values(ascending=False)
 
 
-@lru_cache(maxsize=8)
+@st.cache_data
 def get_correlation_matrix():
     """Cache para matriz de correlação"""
     df = get_cached_data()
@@ -83,7 +113,7 @@ def get_correlation_matrix():
     return df[numeric_vars].corr()
 
 
-@lru_cache(maxsize=16)
+@st.cache_data
 def get_crosstab_data(column):
     """Cache para dados de crosstab"""
     df = get_cached_data()
@@ -91,666 +121,195 @@ def get_crosstab_data(column):
     return ct.sort_values(by="yes", ascending=False)
 
 
-@app.callback(
-    Output("data-store", "data"), Input("data-store", "id"), prevent_initial_call=False
-)
-def load_data(_):
-    """Carrega dados uma única vez"""
-    df = get_cached_data()
-    return df.to_dict("records")
-
-
-# Layout permanece o mesmo
-app.layout = dbc.Container(
-    [
-        dcc.Store(id="data-store"),
-        # Header Section
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        html.Div(
-                            [
-                                html.H1(
-                                    "Bank Marketing Campaign Analysis Dashboard",
-                                    className="header-title text-center mb-3",
-                                ),
-                                html.P(
-                                    "Análise exploratória interativa de campanhas de marketing bancário para depósitos a prazo",
-                                    className="header-subtitle text-center",
-                                ),
-                            ],
-                            className="header-container",
-                        )
-                    ]
-                )
-            ],
-            className="mb-4",
-        ),
-        # Stats Overview Section
-        dbc.Row([dbc.Col([html.Div(id="stats-overview")])], className="mb-4"),
-        # Section 1: Descriptive Analysis
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    [
-                                        html.H3(
-                                            "📊 1. Análise Descritiva Geral",
-                                            className="card-title mb-0",
-                                        )
-                                    ]
-                                ),
-                                dbc.CardBody(
-                                    [
-                                        # Controls and Categorical Chart Row
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        html.Label(
-                                                            "Selecione a variável categórica:",
-                                                            className="control-label fw-bold",
-                                                        ),
-                                                        dcc.Dropdown(
-                                                            id="categorical-dropdown",
-                                                            options=[
-                                                                {
-                                                                    "label": "Ocupação (job)",
-                                                                    "value": "job",
-                                                                },
-                                                                {
-                                                                    "label": "Escolaridade (education)",
-                                                                    "value": "education",
-                                                                },
-                                                                {
-                                                                    "label": "Estado Civil (marital)",
-                                                                    "value": "marital",
-                                                                },
-                                                                {
-                                                                    "label": "Tipo de Contato (contact)",
-                                                                    "value": "contact",
-                                                                },
-                                                                {
-                                                                    "label": "Resultado Campanha Anterior (poutcome)",
-                                                                    "value": "poutcome",
-                                                                },
-                                                            ],
-                                                            value="job",
-                                                            className="mb-3",
-                                                        ),
-                                                    ],
-                                                    width=12,
-                                                    lg=4,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="categorical-frequency-chart",
-                                                            className="main-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=8,
-                                                ),
-                                            ],
-                                            className="mb-4",
-                                        ),
-                                        # Numeric Variable Analysis Row
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        html.Label(
-                                                            "Selecione a variável numérica:",
-                                                            className="control-label fw-bold",
-                                                        ),
-                                                        dcc.Dropdown(
-                                                            id="numeric-dropdown",
-                                                            options=[
-                                                                {
-                                                                    "label": "Idade (age)",
-                                                                    "value": "age",
-                                                                },
-                                                                {
-                                                                    "label": "Saldo Médio (balance)",
-                                                                    "value": "balance",
-                                                                },
-                                                                {
-                                                                    "label": "Número de Contatos (campaign)",
-                                                                    "value": "campaign",
-                                                                },
-                                                                {
-                                                                    "label": "Duração do Contato (duration)",
-                                                                    "value": "duration",
-                                                                },
-                                                            ],
-                                                            value="age",
-                                                            className="mb-3",
-                                                        ),
-                                                    ],
-                                                    width=12,
-                                                    lg=4,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="numeric-distribution-chart",
-                                                            className="main-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=8,
-                                                ),
-                                            ]
-                                        ),
-                                    ]
-                                ),
-                            ],
-                            className="dashboard-card",
-                        )
-                    ]
-                )
-            ],
-            className="mb-4",
-        ),
-        # Section 2: Target Variable Analysis
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    [
-                                        html.H3(
-                                            "🎯 2. Relações com a Variável Alvo (y)",
-                                            className="card-title mb-0",
-                                        )
-                                    ]
-                                ),
-                                dbc.CardBody(
-                                    [
-                                        # Control and Adhesion Rate Chart
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        html.Label(
-                                                            "Selecione a variável para análise de taxa de adesão:",
-                                                            className="control-label fw-bold",
-                                                        ),
-                                                        dcc.Dropdown(
-                                                            id="adhesion-dropdown",
-                                                            options=[
-                                                                {
-                                                                    "label": "Ocupação (job)",
-                                                                    "value": "job",
-                                                                },
-                                                                {
-                                                                    "label": "Escolaridade (education)",
-                                                                    "value": "education",
-                                                                },
-                                                                {
-                                                                    "label": "Tipo de Contato (contact)",
-                                                                    "value": "contact",
-                                                                },
-                                                                {
-                                                                    "label": "Resultado Campanha Anterior (poutcome)",
-                                                                    "value": "poutcome",
-                                                                },
-                                                                {
-                                                                    "label": "Mês do Contato (month)",
-                                                                    "value": "month",
-                                                                },
-                                                            ],
-                                                            value="job",
-                                                            className="mb-3",
-                                                        ),
-                                                    ],
-                                                    width=12,
-                                                    lg=4,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="adhesion-rate-chart",
-                                                            className="main-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=8,
-                                                ),
-                                            ],
-                                            className="mb-4",
-                                        ),
-                                        # Two Charts Side by Side
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="balance-boxplot",
-                                                            className="side-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="contact-before-chart",
-                                                            className="side-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                            ]
-                                        ),
-                                    ]
-                                ),
-                            ],
-                            className="dashboard-card",
-                        )
-                    ]
-                )
-            ],
-            className="mb-4",
-        ),
-        # Section 3: Advanced Analysis
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    [
-                                        html.H3(
-                                            "🔬 3. Análises Avançadas",
-                                            className="card-title mb-0",
-                                        )
-                                    ]
-                                ),
-                                dbc.CardBody(
-                                    [
-                                        # First Row of Charts
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="correlation-heatmap",
-                                                            className="advanced-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="scatter-age-balance",
-                                                            className="advanced-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                            ],
-                                            className="mb-3",
-                                        ),
-                                        # Second Row of Charts
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="violin-balance",
-                                                            className="advanced-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="density-age",
-                                                            className="advanced-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=6,
-                                                ),
-                                            ]
-                                        ),
-                                    ]
-                                ),
-                            ],
-                            className="dashboard-card",
-                        )
-                    ]
-                )
-            ],
-            className="mb-4",
-        ),
-        # Section 4: Missing Values Analysis
-        dbc.Row(
-            [
-                dbc.Col(
-                    [
-                        dbc.Card(
-                            [
-                                dbc.CardHeader(
-                                    [
-                                        html.H3(
-                                            "🔍 4. Análise de Valores Ausentes",
-                                            className="card-title mb-0",
-                                        )
-                                    ]
-                                ),
-                                dbc.CardBody(
-                                    [
-                                        dbc.Row(
-                                            [
-                                                dbc.Col(
-                                                    [
-                                                        html.Label(
-                                                            "Selecione a variável para análise de missing values:",
-                                                            className="control-label fw-bold",
-                                                        ),
-                                                        dcc.Dropdown(
-                                                            id="missing-dropdown",
-                                                            options=[
-                                                                {
-                                                                    "label": "Ocupação (job)",
-                                                                    "value": "job",
-                                                                },
-                                                                {
-                                                                    "label": "Escolaridade (education)",
-                                                                    "value": "education",
-                                                                },
-                                                                {
-                                                                    "label": "Tipo de Contato (contact)",
-                                                                    "value": "contact",
-                                                                },
-                                                                {
-                                                                    "label": "Resultado Campanha Anterior (poutcome)",
-                                                                    "value": "poutcome",
-                                                                },
-                                                            ],
-                                                            value="job",
-                                                            className="mb-3",
-                                                        ),
-                                                    ],
-                                                    width=12,
-                                                    lg=4,
-                                                ),
-                                                dbc.Col(
-                                                    [
-                                                        dcc.Graph(
-                                                            id="missing-impact-chart",
-                                                            className="main-chart",
-                                                        )
-                                                    ],
-                                                    width=12,
-                                                    lg=8,
-                                                ),
-                                            ]
-                                        )
-                                    ]
-                                ),
-                            ],
-                            className="dashboard-card",
-                        )
-                    ]
-                )
-            ]
-        ),
-    ],
-    fluid=True,
-    className="px-4 py-3",
+# Header Principal
+st.markdown(
+    """
+<div class="main-header">
+    <h1>📊 Bank Marketing Campaign Analysis Dashboard</h1>
+    <p>Análise exploratória interativa de campanhas de marketing bancário para depósitos a prazo</p>
+</div>
+""",
+    unsafe_allow_html=True,
 )
 
+# Carregamento dos dados
+df = get_cached_data()
 
-# Callbacks otimizados
-@app.callback(
-    Output("stats-overview", "children"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
+# Stats Overview
+st.markdown(
+    '<h2 class="section-header">📈 Visão Geral dos Dados</h2>', unsafe_allow_html=True
 )
-def update_stats_overview(data):
-    """Stats overview otimizado usando cache"""
-    df = get_cached_data()
 
-    total_records = len(df)
-    adhesion_rate = df["y_numeric"].mean() * 100
-    avg_age = df["age"].mean()
-    avg_balance = df["balance"].mean()
+total_records = len(df)
+adhesion_rate = df["y_numeric"].mean() * 100
+avg_age = df["age"].mean()
+avg_balance = df["balance"].mean()
 
-    return dbc.Row(
-        [
-            dbc.Col(
-                [
-                    dbc.Card(
-                        [
-                            dbc.CardBody(
-                                [
-                                    html.H2(
-                                        f"{total_records:,}",
-                                        className="stat-value text-primary mb-1",
-                                    ),
-                                    html.P(
-                                        "Total de Registros",
-                                        className="stat-label text-muted mb-0",
-                                    ),
-                                ],
-                                className="text-center",
-                            )
-                        ],
-                        className="stat-card",
-                    )
-                ],
-                width=12,
-                sm=6,
-                lg=3,
-            ),
-            dbc.Col(
-                [
-                    dbc.Card(
-                        [
-                            dbc.CardBody(
-                                [
-                                    html.H2(
-                                        f"{adhesion_rate:.1f}%",
-                                        className="stat-value text-success mb-1",
-                                    ),
-                                    html.P(
-                                        "Taxa de Adesão",
-                                        className="stat-label text-muted mb-0",
-                                    ),
-                                ],
-                                className="text-center",
-                            )
-                        ],
-                        className="stat-card",
-                    )
-                ],
-                width=12,
-                sm=6,
-                lg=3,
-            ),
-            dbc.Col(
-                [
-                    dbc.Card(
-                        [
-                            dbc.CardBody(
-                                [
-                                    html.H2(
-                                        f"{avg_age:.0f}",
-                                        className="stat-value text-info mb-1",
-                                    ),
-                                    html.P(
-                                        "Idade Média",
-                                        className="stat-label text-muted mb-0",
-                                    ),
-                                ],
-                                className="text-center",
-                            )
-                        ],
-                        className="stat-card",
-                    )
-                ],
-                width=12,
-                sm=6,
-                lg=3,
-            ),
-            dbc.Col(
-                [
-                    dbc.Card(
-                        [
-                            dbc.CardBody(
-                                [
-                                    html.H2(
-                                        f"€{avg_balance:,.0f}",
-                                        className="stat-value text-warning mb-1",
-                                    ),
-                                    html.P(
-                                        "Saldo Médio",
-                                        className="stat-label text-muted mb-0",
-                                    ),
-                                ],
-                                className="text-center",
-                            )
-                        ],
-                        className="stat-card",
-                    )
-                ],
-                width=12,
-                sm=6,
-                lg=3,
-            ),
-        ],
-        className="g-3",
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.markdown(
+        f"""
+    <div class="stat-card">
+        <div class="stat-value">{total_records:,}</div>
+        <div class="stat-label">Total de Registros</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
     )
 
+with col2:
+    st.markdown(
+        f"""
+    <div class="stat-card">
+        <div class="stat-value">{adhesion_rate:.1f}%</div>
+        <div class="stat-label">Taxa de Adesão</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
 
-@app.callback(
-    Output("categorical-frequency-chart", "figure"),
-    Input("categorical-dropdown", "value"),
-    prevent_initial_call=True,
+with col3:
+    st.markdown(
+        f"""
+    <div class="stat-card">
+        <div class="stat-value">{avg_age:.0f}</div>
+        <div class="stat-label">Idade Média</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+with col4:
+    st.markdown(
+        f"""
+    <div class="stat-card">
+        <div class="stat-value">€{avg_balance:,.0f}</div>
+        <div class="stat-label">Saldo Médio</div>
+    </div>
+    """,
+        unsafe_allow_html=True,
+    )
+
+# Seção 1: Análise Descritiva Geral
+st.markdown(
+    '<h2 class="section-header">📊 1. Análise Descritiva Geral</h2>',
+    unsafe_allow_html=True,
 )
-def update_categorical_chart(selected_var):
-    """Gráfico categórico otimizado"""
-    freq_data = get_frequency_data(selected_var)
 
-    fig = px.bar(
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("Variável Categórica")
+    categorical_var = st.selectbox(
+        "Selecione a variável categórica:",
+        options=["job", "education", "marital", "contact", "poutcome"],
+        format_func=lambda x: {
+            "job": "Ocupação (job)",
+            "education": "Escolaridade (education)",
+            "marital": "Estado Civil (marital)",
+            "contact": "Tipo de Contato (contact)",
+            "poutcome": "Resultado Campanha Anterior (poutcome)",
+        }[x],
+    )
+
+with col2:
+    freq_data = get_frequency_data(categorical_var)
+    fig_cat = px.bar(
         x=freq_data.index,
         y=freq_data.values,
-        title=f"Frequência das categorias em {selected_var}",
-        labels={"x": selected_var, "y": "Frequência"},
+        title=f"Frequência das categorias em {categorical_var}",
+        labels={"x": categorical_var, "y": "Frequência"},
         color=freq_data.values,
         color_continuous_scale="Blues",
     )
-
-    fig.update_layout(
+    fig_cat.update_layout(
         xaxis_tickangle=-45,
         height=400,
         showlegend=False,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision=selected_var,
-        transition_duration=300,
+    )
+    st.plotly_chart(fig_cat, use_container_width=True)
+
+# Análise de variáveis numéricas
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("Variável Numérica")
+    numeric_var = st.selectbox(
+        "Selecione a variável numérica:",
+        options=["age", "balance", "campaign", "duration"],
+        format_func=lambda x: {
+            "age": "Idade (age)",
+            "balance": "Saldo Médio (balance)",
+            "campaign": "Número de Contatos (campaign)",
+            "duration": "Duração do Contato (duration)",
+        }[x],
     )
 
-    return fig
-
-
-@app.callback(
-    Output("numeric-distribution-chart", "figure"),
-    Input("numeric-dropdown", "value"),
-    prevent_initial_call=True,
-)
-def update_numeric_chart(selected_var):
-    """Gráfico numérico otimizado"""
-    df = get_cached_data()
-
-    fig = px.histogram(
+with col2:
+    fig_num = px.histogram(
         df,
-        x=selected_var,
+        x=numeric_var,
         nbins=30,
-        title=f"Distribuição da variável {selected_var}",
+        title=f"Distribuição da variável {numeric_var}",
         marginal="box",
         color_discrete_sequence=[COLORS["primary"]],
     )
-
-    fig.update_layout(
+    fig_num.update_layout(
         height=400,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision=selected_var,
-        transition_duration=300,
+    )
+    st.plotly_chart(fig_num, use_container_width=True)
+
+# Seção 2: Relações com a Variável Alvo
+st.markdown(
+    '<h2 class="section-header">🎯 2. Relações com a Variável Alvo (y)</h2>',
+    unsafe_allow_html=True,
+)
+
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("Taxa de Adesão")
+    adhesion_var = st.selectbox(
+        "Selecione a variável para análise de taxa de adesão:",
+        options=["job", "education", "contact", "poutcome", "month"],
+        format_func=lambda x: {
+            "job": "Ocupação (job)",
+            "education": "Escolaridade (education)",
+            "contact": "Tipo de Contato (contact)",
+            "poutcome": "Resultado Campanha Anterior (poutcome)",
+            "month": "Mês do Contato (month)",
+        }[x],
     )
 
-    return fig
-
-
-@app.callback(
-    Output("adhesion-rate-chart", "figure"),
-    Input("adhesion-dropdown", "value"),
-    prevent_initial_call=True,
-)
-def update_adhesion_chart(selected_var):
-    """Gráfico de taxa de adesão otimizado"""
-    adh_rate = get_adhesion_rate(selected_var)
-
-    fig = px.bar(
+with col2:
+    adh_rate = get_adhesion_rate(adhesion_var)
+    fig_adh = px.bar(
         x=adh_rate.index,
         y=adh_rate.values,
-        title=f"Taxa de Adesão por {selected_var}",
-        labels={"x": selected_var, "y": "Taxa de Adesão"},
+        title=f"Taxa de Adesão por {adhesion_var}",
+        labels={"x": adhesion_var, "y": "Taxa de Adesão"},
         color=adh_rate.values,
         color_continuous_scale="RdYlBu_r",
     )
-
-    fig.update_layout(
+    fig_adh.update_layout(
         xaxis_tickangle=-45,
         height=400,
         yaxis_tickformat=".1%",
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision=selected_var,
-        transition_duration=300,
     )
+    st.plotly_chart(fig_adh, use_container_width=True)
 
-    return fig
+# Gráficos lado a lado
+col1, col2 = st.columns(2)
 
-
-@app.callback(
-    Output("balance-boxplot", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
-)
-def update_balance_boxplot(data):
-    """Boxplot otimizado"""
-    df = get_cached_data()
-
-    fig = px.box(
+with col1:
+    fig_box = px.box(
         df,
         x="y",
         y="balance",
@@ -758,38 +317,18 @@ def update_balance_boxplot(data):
         color="y",
         color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
     )
-
-    fig.update_layout(
+    fig_box.update_layout(
         height=320,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=14,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="balance-boxplot",
     )
+    st.plotly_chart(fig_box, use_container_width=True)
 
-    return fig
-
-
-@app.callback(
-    Output("contact-before-chart", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
-)
-def update_contact_before_chart(data):
-    """Gráfico de contato anterior otimizado"""
-    df = get_cached_data()
-
-    # Cache do cálculo
-    if "contact_before_rates" not in _processed_cache:
-        _processed_cache["contact_before_rates"] = (
-            df.groupby("was_contacted_before")["y_numeric"].mean().reset_index()
-        )
-
-    adhesion_rates = _processed_cache["contact_before_rates"]
-
-    fig = px.bar(
+with col2:
+    adhesion_rates = (
+        df.groupby("was_contacted_before")["y_numeric"].mean().reset_index()
+    )
+    fig_contact = px.bar(
         adhesion_rates,
         x="was_contacted_before",
         y="y_numeric",
@@ -801,8 +340,7 @@ def update_contact_before_chart(data):
         color="y_numeric",
         color_continuous_scale="viridis",
     )
-
-    fig.update_layout(
+    fig_contact.update_layout(
         height=320,
         yaxis_tickformat=".1%",
         xaxis=dict(
@@ -812,61 +350,40 @@ def update_contact_before_chart(data):
         ),
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=14,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="contact-before",
     )
+    st.plotly_chart(fig_contact, use_container_width=True)
 
-    return fig
-
-
-@app.callback(
-    Output("correlation-heatmap", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
+# Seção 3: Análises Avançadas
+st.markdown(
+    '<h2 class="section-header">🔬 3. Análises Avançadas</h2>', unsafe_allow_html=True
 )
-def update_correlation_heatmap(data):
-    """Heatmap de correlação otimizado"""
-    corr_matrix = get_correlation_matrix()
 
-    fig = px.imshow(
+col1, col2 = st.columns(2)
+
+with col1:
+    corr_matrix = get_correlation_matrix()
+    fig_corr = px.imshow(
         corr_matrix,
         text_auto=True,
         aspect="auto",
         title="Matriz de Correlação das Variáveis Numéricas",
         color_continuous_scale="RdBu_r",
     )
-
-    fig.update_layout(
+    fig_corr.update_layout(
         height=360,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="correlation-heatmap",
     )
+    st.plotly_chart(fig_corr, use_container_width=True)
 
-    return fig
-
-
-@app.callback(
-    Output("scatter-age-balance", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
-)
-def update_scatter_chart(data):
-    """Scatter plot otimizado com sampling"""
-    df = get_cached_data()
-
+with col2:
     # Sampling para melhor performance em scatter plots grandes
     if len(df) > 5000:
         df_sample = df.sample(n=5000, random_state=42)
     else:
         df_sample = df
 
-    fig = px.scatter(
+    fig_scatter = px.scatter(
         df_sample,
         x="age",
         y="balance",
@@ -875,30 +392,17 @@ def update_scatter_chart(data):
         opacity=0.6,
         color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
     )
-
-    fig.update_layout(
+    fig_scatter.update_layout(
         height=360,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="scatter-age-balance",
     )
+    st.plotly_chart(fig_scatter, use_container_width=True)
 
-    return fig
+col1, col2 = st.columns(2)
 
-
-@app.callback(
-    Output("violin-balance", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
-)
-def update_violin_chart(data):
-    """Gráfico de violino otimizado"""
-    df = get_cached_data()
-
-    fig = px.violin(
+with col1:
+    fig_violin = px.violin(
         df,
         x="y",
         y="balance",
@@ -906,46 +410,31 @@ def update_violin_chart(data):
         color="y",
         color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
     )
-
-    fig.update_layout(
+    fig_violin.update_layout(
         height=320,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=14,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="violin-balance",
     )
+    st.plotly_chart(fig_violin, use_container_width=True)
 
-    return fig
-
-
-@app.callback(
-    Output("density-age", "figure"),
-    Input("data-store", "data"),
-    prevent_initial_call=True,
-)
-def update_density_chart(data):
-    """Gráfico de densidade otimizado"""
-    df = get_cached_data()
-
-    fig = go.Figure()
+with col2:
+    fig_density = go.Figure()
     colors = {"yes": COLORS["success"], "no": COLORS["danger"]}
 
     for category in ["yes", "no"]:
         subset = df[df["y"] == category]
-        fig.add_trace(
+        fig_density.add_trace(
             go.Histogram(
                 x=subset["age"],
                 name=f"Adesão: {category}",
                 opacity=0.7,
                 histnorm="probability density",
                 marker_color=colors[category],
-                nbinsx=25,  # Reduzir bins para melhor performance
+                nbinsx=25,
             )
         )
 
-    fig.update_layout(
+    fig_density.update_layout(
         title="Distribuição de Idade por Adesão ao Produto (Densidade)",
         xaxis_title="Idade",
         yaxis_title="Densidade",
@@ -953,52 +442,71 @@ def update_density_chart(data):
         height=320,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=14,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision="density-age",
+    )
+    st.plotly_chart(fig_density, use_container_width=True)
+
+# Seção 4: Análise de Valores Ausentes
+st.markdown(
+    '<h2 class="section-header">🔍 4. Análise de Valores Ausentes</h2>',
+    unsafe_allow_html=True,
+)
+
+col1, col2 = st.columns([1, 2])
+
+with col1:
+    st.subheader("Missing Values")
+    missing_var = st.selectbox(
+        "Selecione a variável para análise de missing values:",
+        options=["job", "education", "contact", "poutcome"],
+        format_func=lambda x: {
+            "job": "Ocupação (job)",
+            "education": "Escolaridade (education)",
+            "contact": "Tipo de Contato (contact)",
+            "poutcome": "Resultado Campanha Anterior (poutcome)",
+        }[x],
     )
 
-    return fig
+with col2:
+    ct = get_crosstab_data(missing_var)
 
-
-@app.callback(
-    Output("missing-impact-chart", "figure"),
-    Input("missing-dropdown", "value"),
-    prevent_initial_call=True,
-)
-def update_missing_chart(selected_var):
-    """Gráfico de missing values otimizado"""
-    ct = get_crosstab_data(selected_var)
-
-    fig = go.Figure()
-
-    fig.add_trace(
+    fig_missing = go.Figure()
+    fig_missing.add_trace(
         go.Bar(name="Não Aderiu", x=ct.index, y=ct["no"], marker_color=COLORS["danger"])
     )
-
-    fig.add_trace(
+    fig_missing.add_trace(
         go.Bar(name="Aderiu", x=ct.index, y=ct["yes"], marker_color=COLORS["success"])
     )
 
-    fig.update_layout(
-        title=f"Distribuição de Adesão por Categoria em {selected_var} (incluindo Missing)",
-        xaxis_title=selected_var,
+    fig_missing.update_layout(
+        title=f"Distribuição de Adesão por Categoria em {missing_var} (incluindo Missing)",
+        xaxis_title=missing_var,
         yaxis_title="Porcentagem (%)",
         barmode="stack",
         height=400,
         xaxis_tickangle=-45,
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
-        title_font_size=16,
-        title_font_color=COLORS["secondary"],
-        # Otimizações de performance
-        uirevision=selected_var,
-        transition_duration=300,
     )
+    st.plotly_chart(fig_missing, use_container_width=True)
 
-    return fig
+# Informações adicionais na sidebar
+st.sidebar.markdown("## 📋 Informações do Dataset")
+st.sidebar.info(
+    f"""
+**Total de registros:** {len(df):,}  
+**Variáveis:** {len(df.columns)}  
+**Taxa de adesão geral:** {df['y_numeric'].mean()*100:.1f}%  
+**Período:** Campanhas de marketing bancário  
+**Fonte:** UCI Machine Learning Repository
+"""
+)
 
-
-if __name__ == "__main__":
-    app.run(debug=True)
+st.sidebar.markdown("## 🎯 Principais Insights")
+st.sidebar.success(
+    """
+- Análise completa de campanhas de marketing
+- Identificação de fatores de sucesso
+- Segmentação de clientes
+- Otimização de estratégias
+"""
+)
