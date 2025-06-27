@@ -15,9 +15,9 @@
    pip install -r requirements.txt
    ```
 
-3. **Execute o dashboard:**
+3. **Execute o app:**
    ```bash
-   python dashboard.py
+   python app.py
    ```
 
 4. **Abra o navegador e acesse:**
