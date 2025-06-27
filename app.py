@@ -8,6 +8,7 @@ import dash_bootstrap_components as dbc
 
 app = dash.Dash(__name__, 
                 external_stylesheets=[dbc.themes.BOOTSTRAP, '/assets/style.css'])
+server = app.server
 app.title = "Bank Marketing Campaign Analysis Dashboard"
 
 # Modern color palette
@@ -594,5 +595,5 @@ def update_missing_chart(selected_var, data):
     return fig
 
 
-if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=8050)
+if __name__ == '__main__':
+    app.run_server(debug=True)
