@@ -4,7 +4,7 @@ Um dashboard interativo para análise exploratória de campanhas de marketing ba
 
 ## 🌐 Acesso Online
 
-**Dashboard em produção:** [https://dashboard-efg0.onrender.com/](https://dashboard-efg0.onrender.com/)
+<a href="https://dashboard-2jmvjze3hretkbyht9vg63.streamlit.app/" target="_blank">Dashboard em produção</a>
 
 ## 🛠️ Tecnologias Utilizadas
 
