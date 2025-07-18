@@ -1,61 +1,48 @@
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
 from ucimlrepo import fetch_ucirepo
-from functools import lru_cache
-import time
+import seaborn as sns
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import confusion_matrix, roc_curve, auc
 
-# Configuração da página
+# --- Configuração da Página e Estilos ---
 st.set_page_config(
-    page_title="Bank Marketing Campaign Analysis Dashboard",
-    page_icon="📊",
+    page_title="Bank Marketing Campaign Analysis",
+    page_icon="🌳",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# Paleta de cores moderna
+# Paleta de cores
 COLORS = {
-    "primary": "#3498db",
+    "primary": "#27ae60", # Verde para combinar com Random Forest
     "secondary": "#2c3e50",
-    "success": "#27ae60",
-    "warning": "#f39c12",
+    "success": "#2ecc71",
     "danger": "#e74c3c",
-    "light": "#f8f9fa",
-    "dark": "#343a40",
 }
 
 # CSS customizado
 st.markdown(
     """
 <style>
-    .main-header {
-        text-align: center;
-        color: #2c3e50;
-        margin-bottom: 2rem;
-    }
-    .stat-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        padding: 1rem;
-        border-radius: 10px;
+    .main-header { text-align: center; color: #2c3e50; margin-bottom: 2rem; }
+    .stat-card { background: linear-gradient(135deg, #27ae60 0%, #2c3e50 100%); padding: 1rem; border-radius: 10px; color: white; text-align: center; margin-bottom: 1rem; }
+    .stat-value { font-size: 2rem; font-weight: bold; margin-bottom: 0.5rem; }
+    .stat-label { font-size: 0.9rem; opacity: 0.8; }
+    .section-header { color: #2c3e50; border-bottom: 2px solid #27ae60; padding-bottom: 0.5rem; margin: 2rem 0 1rem 0; }
+    .stButton>button {
+        background-color: #27ae60;
         color: white;
-        text-align: center;
-        margin-bottom: 1rem;
-    }
-    .stat-value {
-        font-size: 2rem;
+        border-radius: 5px;
+        padding: 0.5rem 1rem;
+        border: none;
         font-weight: bold;
-        margin-bottom: 0.5rem;
-    }
-    .stat-label {
-        font-size: 0.9rem;
-        opacity: 0.8;
-    }
-    .section-header {
-        color: #2c3e50;
-        border-bottom: 2px solid #3498db;
-        padding-bottom: 0.5rem;
-        margin: 2rem 0 1rem 0;
     }
 </style>
 """,
@@ -63,450 +50,275 @@ st.markdown(
 )
 
 
-# Cache global para dados
+# --- Funções de Cache e Carregamento de Dados ---
 @st.cache_data
-def get_cached_data():
-    """Cache dos dados originais do UCI"""
-    print("Carregando dados do UCI...")
+def get_data():
+    """Carrega e pré-processa os dados originais do UCI."""
     bank_marketing = fetch_ucirepo(id=222)
     X = bank_marketing.data.features
     y = bank_marketing.data.targets
     df = pd.concat([X, y], axis=1)
-
-    # Processamento básico
-    categorical_vars = ["job", "education", "marital", "contact", "poutcome"]
-    df[categorical_vars] = df[categorical_vars].fillna("Missing")
-    df["was_contacted_before"] = df["pdays"].apply(lambda x: False if x == -1 else True)
     df["y_numeric"] = df["y"].map({"yes": 1, "no": 0})
-
-    print("Dados carregados e processados!")
+    df.drop(columns=['contact', 'poutcome'], inplace=True)
+    df.dropna(inplace=True)
     return df
 
+@st.cache_resource
+def train_and_predict(_df):
+    """Treina o modelo e adiciona as previsões ao dataframe original."""
+    X = _df.drop(["y", "y_numeric"], axis=1)
+    y = _df["y_numeric"]
 
-@st.cache_data
-def get_frequency_data(column):
-    """Cache para dados de frequência"""
-    df = get_cached_data()
-    return df[column].value_counts()
+    numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
+    categorical_features = X.select_dtypes(include=['object']).columns
 
-
-@st.cache_data
-def get_adhesion_rate(column):
-    """Cache para taxa de adesão"""
-    df = get_cached_data()
-    return df.groupby(column)["y_numeric"].mean().sort_values(ascending=False)
-
-
-@st.cache_data
-def get_correlation_matrix():
-    """Cache para matriz de correlação"""
-    df = get_cached_data()
-    numeric_vars = [
-        "age",
-        "balance",
-        "duration",
-        "campaign",
-        "pdays",
-        "previous",
-        "y_numeric",
-    ]
-    return df[numeric_vars].corr()
-
-
-@st.cache_data
-def get_crosstab_data(column):
-    """Cache para dados de crosstab"""
-    df = get_cached_data()
-    ct = pd.crosstab(df[column], df["y"], normalize="index") * 100
-    return ct.sort_values(by="yes", ascending=False)
-
-
-# Header Principal
-st.markdown(
-    """
-<div class="main-header">
-    <h1>📊 Bank Marketing Campaign Analysis Dashboard</h1>
-    <p>Análise exploratória interativa de campanhas de marketing bancário para depósitos a prazo</p>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-# Carregamento dos dados
-df = get_cached_data()
-
-# Stats Overview
-st.markdown(
-    '<h2 class="section-header">📈 Visão Geral dos Dados</h2>', unsafe_allow_html=True
-)
-
-total_records = len(df)
-adhesion_rate = df["y_numeric"].mean() * 100
-avg_age = df["age"].mean()
-avg_balance = df["balance"].mean()
-
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    st.markdown(
-        f"""
-    <div class="stat-card">
-        <div class="stat-value">{total_records:,}</div>
-        <div class="stat-label">Total de Registros</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', StandardScaler(), numeric_features),
+            ('cat', OneHotEncoder(handle_unknown='ignore'), categorical_features)
+        ],
+        remainder='passthrough'
     )
 
-with col2:
-    st.markdown(
-        f"""
-    <div class="stat-card">
-        <div class="stat-value">{adhesion_rate:.1f}%</div>
-        <div class="stat-label">Taxa de Adesão</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
+    model_pipeline = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', RandomForestClassifier(random_state=42, n_jobs=-1))
+    ])
+
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    model_pipeline.fit(X_train, y_train)
+    
+    # Adiciona as previsões ao dataframe original para a análise de perfil
+    _df['prediction'] = model_pipeline.predict(X)
+    
+    return model_pipeline, X_train, X_test, y_train, y_test, _df
+
+# Carrega os dados e treina o modelo
+df_original = get_data()
+model_pipeline, X_train, X_test, y_train, y_test, df_with_predictions = train_and_predict(df_original.copy())
+
+
+# --- UI da Barra Lateral ---
+st.sidebar.title("Navegação")
+page = st.sidebar.radio("Selecione uma página:", ["Análise Exploratória", "Simulação Interativa"])
+st.sidebar.markdown("---")
+
+# --- Lógica da Página ---
+if page == "Análise Exploratória":
+    st.markdown('<h1 class="main-header">📊 Análise de Campanha de Marketing Bancário</h1>', unsafe_allow_html=True)
+
+    # --- SEÇÃO DE FILTRO DE PERFIL ---
+    st.markdown('<h2 class="section-header">🔍 Análise de Perfil de Cliente</h2>', unsafe_allow_html=True)
+    profile_filter = st.selectbox(
+        "Filtrar Perfil de Cliente:",
+        options=["Todos os Clientes", "Clientes com Potencial de Adesão", "Clientes com Baixo Potencial"]
     )
 
-with col3:
-    st.markdown(
-        f"""
-    <div class="stat-card">
-        <div class="stat-value">{avg_age:.0f}</div>
-        <div class="stat-label">Idade Média</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-with col4:
-    st.markdown(
-        f"""
-    <div class="stat-card">
-        <div class="stat-value">€{avg_balance:,.0f}</div>
-        <div class="stat-label">Saldo Médio</div>
-    </div>
-    """,
-        unsafe_allow_html=True,
-    )
-
-# Seção 1: Análise Descritiva Geral
-st.markdown(
-    '<h2 class="section-header">📊 1. Análise Descritiva Geral</h2>',
-    unsafe_allow_html=True,
-)
-
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.subheader("Variável Categórica")
-    categorical_var = st.selectbox(
-        "Selecione a variável categórica:",
-        options=["job", "education", "marital", "contact", "poutcome"],
-        format_func=lambda x: {
-            "job": "Ocupação (job)",
-            "education": "Escolaridade (education)",
-            "marital": "Estado Civil (marital)",
-            "contact": "Tipo de Contato (contact)",
-            "poutcome": "Resultado Campanha Anterior (poutcome)",
-        }[x],
-    )
-
-with col2:
-    freq_data = get_frequency_data(categorical_var)
-    fig_cat = px.bar(
-        x=freq_data.index,
-        y=freq_data.values,
-        title=f"Frequência das categorias em {categorical_var}",
-        labels={"x": categorical_var, "y": "Frequência"},
-        color=freq_data.values,
-        color_continuous_scale="Blues",
-    )
-    fig_cat.update_layout(
-        xaxis_tickangle=-45,
-        height=400,
-        showlegend=False,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_cat, use_container_width=True)
-
-# Análise de variáveis numéricas
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.subheader("Variável Numérica")
-    numeric_var = st.selectbox(
-        "Selecione a variável numérica:",
-        options=["age", "balance", "campaign", "duration"],
-        format_func=lambda x: {
-            "age": "Idade (age)",
-            "balance": "Saldo Médio (balance)",
-            "campaign": "Número de Contatos (campaign)",
-            "duration": "Duração do Contato (duration)",
-        }[x],
-    )
-
-with col2:
-    fig_num = px.histogram(
-        df,
-        x=numeric_var,
-        nbins=30,
-        title=f"Distribuição da variável {numeric_var}",
-        marginal="box",
-        color_discrete_sequence=[COLORS["primary"]],
-    )
-    fig_num.update_layout(
-        height=400,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_num, use_container_width=True)
-
-# Seção 2: Relações com a Variável Alvo
-st.markdown(
-    '<h2 class="section-header">🎯 2. Relações com a Variável Alvo (y)</h2>',
-    unsafe_allow_html=True,
-)
-
-col1, col2 = st.columns([1, 2])
-
-with col1:
-    st.subheader("Taxa de Adesão")
-    adhesion_var = st.selectbox(
-        "Selecione a variável para análise de taxa de adesão:",
-        options=["job", "education", "contact", "poutcome", "month"],
-        format_func=lambda x: {
-            "job": "Ocupação (job)",
-            "education": "Escolaridade (education)",
-            "contact": "Tipo de Contato (contact)",
-            "poutcome": "Resultado Campanha Anterior (poutcome)",
-            "month": "Mês do Contato (month)",
-        }[x],
-    )
-
-with col2:
-    adh_rate = get_adhesion_rate(adhesion_var)
-    fig_adh = px.bar(
-        x=adh_rate.index,
-        y=adh_rate.values,
-        title=f"Taxa de Adesão por {adhesion_var}",
-        labels={"x": adhesion_var, "y": "Taxa de Adesão"},
-        color=adh_rate.values,
-        color_continuous_scale="RdYlBu_r",
-    )
-    fig_adh.update_layout(
-        xaxis_tickangle=-45,
-        height=400,
-        yaxis_tickformat=".1%",
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_adh, use_container_width=True)
-
-# Gráficos lado a lado
-col1, col2 = st.columns(2)
-
-with col1:
-    fig_box = px.box(
-        df,
-        x="y",
-        y="balance",
-        title="Distribuição do Saldo Médio por Adesão ao Produto",
-        color="y",
-        color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
-    )
-    fig_box.update_layout(
-        height=320,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_box, use_container_width=True)
-
-with col2:
-    adhesion_rates = (
-        df.groupby("was_contacted_before")["y_numeric"].mean().reset_index()
-    )
-    fig_contact = px.bar(
-        adhesion_rates,
-        x="was_contacted_before",
-        y="y_numeric",
-        title="Taxa de Adesão por Contato Anterior",
-        labels={
-            "was_contacted_before": "Já foi contatado anteriormente?",
-            "y_numeric": "Taxa de Adesão",
-        },
-        color="y_numeric",
-        color_continuous_scale="viridis",
-    )
-    fig_contact.update_layout(
-        height=320,
-        yaxis_tickformat=".1%",
-        xaxis=dict(
-            tickmode="array",
-            tickvals=[False, True],
-            ticktext=["Não Contatado", "Já Contatado"],
-        ),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_contact, use_container_width=True)
-
-# Seção 3: Análises Avançadas
-st.markdown(
-    '<h2 class="section-header">🔬 3. Análises Avançadas</h2>', unsafe_allow_html=True
-)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    corr_matrix = get_correlation_matrix()
-    fig_corr = px.imshow(
-        corr_matrix,
-        text_auto=True,
-        aspect="auto",
-        title="Matriz de Correlação das Variáveis Numéricas",
-        color_continuous_scale="RdBu_r",
-    )
-    fig_corr.update_layout(
-        height=360,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_corr, use_container_width=True)
-
-with col2:
-    # Sampling para melhor performance em scatter plots grandes
-    if len(df) > 5000:
-        df_sample = df.sample(n=5000, random_state=42)
+    if profile_filter == "Clientes com Potencial de Adesão":
+        df_display = df_with_predictions[df_with_predictions['prediction'] == 1]
+    elif profile_filter == "Clientes com Baixo Potencial":
+        df_display = df_with_predictions[df_with_predictions['prediction'] == 0]
     else:
-        df_sample = df
+        df_display = df_with_predictions
 
-    fig_scatter = px.scatter(
-        df_sample,
-        x="age",
-        y="balance",
-        color="y",
-        title="Relação entre Idade e Saldo por Adesão ao Produto",
-        opacity=0.6,
-        color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
-    )
-    fig_scatter.update_layout(
-        height=360,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_scatter, use_container_width=True)
+    st.markdown(f"Exibindo dados para **{len(df_display)}** clientes.")
 
-col1, col2 = st.columns(2)
+    # Visão Geral (baseada no df_display filtrado)
+    st.markdown('<h2 class="section-header">📈 Visão Geral dos Dados</h2>', unsafe_allow_html=True)
+    total_records, adhesion_rate, avg_age, avg_balance = len(df_display), df_display["y_numeric"].mean() * 100, df_display["age"].mean(), df_display["balance"].mean()
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.markdown(f'<div class="stat-card"><div class="stat-value">{total_records:,}</div><div class="stat-label">Total de Registros</div></div>', unsafe_allow_html=True)
+    with col2:
+        st.markdown(f'<div class="stat-card"><div class="stat-value">{adhesion_rate:.1f}%</div><div class="stat-label">Taxa de Adesão</div></div>', unsafe_allow_html=True)
+    with col3:
+        st.markdown(f'<div class="stat-card"><div class="stat-value">{avg_age:.0f}</div><div class="stat-label">Idade Média</div></div>', unsafe_allow_html=True)
+    with col4:
+        st.markdown(f'<div class="stat-card"><div class="stat-value">€{avg_balance:,.0f}</div><div class="stat-label">Saldo Médio</div></div>', unsafe_allow_html=True)
 
-with col1:
-    fig_violin = px.violin(
-        df,
-        x="y",
-        y="balance",
-        title="Distribuição de Saldo por Adesão (Gráfico de Violino)",
-        color="y",
-        color_discrete_map={"yes": COLORS["success"], "no": COLORS["danger"]},
-    )
-    fig_violin.update_layout(
-        height=320,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_violin, use_container_width=True)
+    # Gráficos (baseados no df_display filtrado)
+    st.markdown('<h2 class="section-header">🎨 Visualizações de Distribuição</h2>', unsafe_allow_html=True)
+    c1, c2 = st.columns(2)
+    with c1:
+        var_cat = st.selectbox("Análise por Variável Categórica:", options=["job", "education", "marital", "housing", "loan", "month"])
+        fig_cat = px.bar(df_display[var_cat].value_counts(), title=f"Distribuição por {var_cat}", color_discrete_sequence=[COLORS["primary"]])
+        st.plotly_chart(fig_cat, use_container_width=True)
+    with c2:
+        var_num = st.selectbox("Análise por Variável Numérica:", options=["age", "balance", "duration", "campaign"])
+        fig_num = px.histogram(df_display, x=var_num, marginal="box", title=f"Distribuição de {var_num}", color_discrete_sequence=[COLORS["success"]])
+        st.plotly_chart(fig_num, use_container_width=True)
 
-with col2:
-    fig_density = go.Figure()
-    colors = {"yes": COLORS["success"], "no": COLORS["danger"]}
+    st.markdown('<h2 class="section-header">🎯 Análise da Variável Alvo e Correlações</h2>', unsafe_allow_html=True)
+    c3, c4 = st.columns(2)
+    with c3:
+        st.subheader("Contagem de Adesão (Sim/Não)")
+        fig_countplot = plt.figure(figsize=(8, 6))
+        sns.countplot(x='y', data=df_display, palette=[COLORS["danger"], COLORS["success"]])
+        plt.xlabel("Adesão ao Depósito a Prazo")
+        plt.ylabel("Contagem")
+        st.pyplot(fig_countplot)
+    with c4:
+        st.subheader("Proporção de Adesão (Sim/Não)")
+        fig_pie, ax = plt.subplots()
+        pie_data = df_display['y'].value_counts()
+        if not pie_data.empty:
+            labels = list(pie_data.index)
+            ax.pie(pie_data, labels=labels, autopct='%.2f%%', colors=[COLORS["primary"], COLORS["success"]], explode=[0.1] * min(2, len(pie_data)))
+        st.pyplot(fig_pie)
 
-    for category in ["yes", "no"]:
-        subset = df[df["y"] == category]
-        fig_density.add_trace(
-            go.Histogram(
-                x=subset["age"],
-                name=f"Adesão: {category}",
-                opacity=0.7,
-                histnorm="probability density",
-                marker_color=colors[category],
-                nbinsx=25,
-            )
-        )
+    st.subheader("Mapa de Calor de Correlações")
+    numeric_df = df_display.select_dtypes(include=['int64', 'float64'])
+    corr = numeric_df.corr()
+    fig_heatmap = plt.figure(figsize=(12, 10))
+    sns.heatmap(corr, annot=True, cmap='coolwarm', fmt=".2f")
+    st.pyplot(fig_heatmap)
 
-    fig_density.update_layout(
-        title="Distribuição de Idade por Adesão ao Produto (Densidade)",
-        xaxis_title="Idade",
-        yaxis_title="Densidade",
-        barmode="overlay",
-        height=320,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_density, use_container_width=True)
+elif page == "Simulação Interativa":
+    st.markdown('<h1 class="main-header">🤖 Simulação Interativa com Perfis de Exemplo</h1>', unsafe_allow_html=True)
 
-# Seção 4: Análise de Valores Ausentes
-st.markdown(
-    '<h2 class="section-header">🔍 4. Análise de Valores Ausentes</h2>',
-    unsafe_allow_html=True,
-)
+    @st.cache_data
+    def get_personas(_model, _X_test, _y_test):
+        results_df = _X_test.copy()
+        results_df['y_real'] = _y_test
+        results_df['y_predito'] = _model.predict(_X_test)
+        results_df['prob_adesao'] = _model.predict_proba(_X_test)[:, 1]
+        
+        maior_potencial = results_df.loc[results_df[(results_df['y_real'] == 1) & (results_df['y_predito'] == 1)]['prob_adesao'].idxmax()]
+        menor_potencial = results_df.loc[results_df[(results_df['y_real'] == 0) & (results_df['y_predito'] == 0)]['prob_adesao'].idxmin()]
+        results_df['dist_do_meio'] = abs(results_df['prob_adesao'] - 0.5)
+        indeciso = results_df.loc[results_df['dist_do_meio'].idxmin()]
+        
+        return {"maior": maior_potencial, "menor": menor_potencial, "indeciso": indeciso}
 
-col1, col2 = st.columns([1, 2])
+    personas = get_personas(model_pipeline, X_test, y_test)
+    
+    st.sidebar.header("Parâmetros do Cliente")
+    st.sidebar.subheader("Carregar Perfis de Exemplo:")
+    col1, col2, col3 = st.sidebar.columns(3)
+    if col1.button("Ideal", help="Carrega o perfil de um cliente real com a maior probabilidade de adesão."):
+        st.session_state.persona = personas["maior"]
+    if col2.button("Ruim", help="Carrega o perfil de um cliente real com a menor probabilidade de adesão."):
+        st.session_state.persona = personas["menor"]
+    if col3.button("Indeciso", help="Carrega o perfil de um cliente real sobre o qual o modelo está mais em dúvida."):
+        st.session_state.persona = personas["indeciso"]
+    
+    if st.sidebar.button("Limpar Campos", type="primary"):
+        st.session_state.persona = {}
 
-with col1:
-    st.subheader("Missing Values")
-    missing_var = st.selectbox(
-        "Selecione a variável para análise de missing values:",
-        options=["job", "education", "contact", "poutcome"],
-        format_func=lambda x: {
-            "job": "Ocupação (job)",
-            "education": "Escolaridade (education)",
-            "contact": "Tipo de Contato (contact)",
-            "poutcome": "Resultado Campanha Anterior (poutcome)",
-        }[x],
-    )
+    def user_input_features():
+        p = st.session_state.get("persona", {})
+        
+        age = st.sidebar.slider('Idade', 18, 95, int(p.get("age", 40)))
+        
+        job_options = sorted(df_original['job'].unique())
+        job_index = job_options.index(p.get("job", "admin.")) if p.get("job") in job_options else 0
+        job = st.sidebar.selectbox('Ocupação', job_options, index=job_index)
+        
+        marital_options = sorted(df_original['marital'].unique())
+        marital_index = marital_options.index(p.get("marital", "married")) if p.get("marital") in marital_options else 0
+        marital = st.sidebar.selectbox('Estado Civil', marital_options, index=marital_index)
 
-with col2:
-    ct = get_crosstab_data(missing_var)
+        education_options = sorted(df_original['education'].unique())
+        education_index = education_options.index(p.get("education", "secondary")) if p.get("education") in education_options else 0
+        education = st.sidebar.selectbox('Escolaridade', education_options, index=education_index)
+        
+        default_options = ('no', 'yes')
+        default_index = default_options.index(p.get("default", "no")) if p.get("default") in default_options else 0
+        default = st.sidebar.selectbox('Inadimplência?', default_options, index=default_index)
 
-    fig_missing = go.Figure()
-    fig_missing.add_trace(
-        go.Bar(name="Não Aderiu", x=ct.index, y=ct["no"], marker_color=COLORS["danger"])
-    )
-    fig_missing.add_trace(
-        go.Bar(name="Aderiu", x=ct.index, y=ct["yes"], marker_color=COLORS["success"])
-    )
+        balance = st.sidebar.number_input('Saldo (em €)', value=int(p.get("balance", 1000)))
 
-    fig_missing.update_layout(
-        title=f"Distribuição de Adesão por Categoria em {missing_var} (incluindo Missing)",
-        xaxis_title=missing_var,
-        yaxis_title="Porcentagem (%)",
-        barmode="stack",
-        height=400,
-        xaxis_tickangle=-45,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_missing, use_container_width=True)
+        housing_options = ('no', 'yes')
+        housing_index = housing_options.index(p.get("housing", "no")) if p.get("housing") in housing_options else 0
+        housing = st.sidebar.selectbox('Empréstimo Imobiliário?', housing_options, index=housing_index)
+        
+        loan_options = ('no', 'yes')
+        loan_index = loan_options.index(p.get("loan", "no")) if p.get("loan") in loan_options else 0
+        loan = st.sidebar.selectbox('Empréstimo Pessoal?', loan_options, index=loan_index)
 
-# Informações adicionais na sidebar
-st.sidebar.markdown("## 📋 Informações do Dataset")
-st.sidebar.info(
-    f"""
-**Total de registros:** {len(df):,}  
-**Variáveis:** {len(df.columns)}  
-**Taxa de adesão geral:** {df['y_numeric'].mean()*100:.1f}%  
-**Período:** Campanhas de marketing bancário  
-**Fonte:** UCI Machine Learning Repository
-"""
-)
+        day_of_week = st.sidebar.slider('Dia do Contato', 1, 31, int(p.get("day_of_week", 15)))
+        
+        month_options = sorted(df_original['month'].unique(), key=lambda m: list(df_original['month'].unique()).index(m))
+        month_index = month_options.index(p.get("month", "may")) if p.get("month") in month_options else 0
+        month = st.sidebar.select_slider('Mês do Contato', options=month_options, value=month_options[month_index])
 
-st.sidebar.markdown("## 🎯 Principais Insights")
-st.sidebar.success(
-    """
-- Análise completa de campanhas de marketing
-- Identificação de fatores de sucesso
-- Segmentação de clientes
-- Otimização de estratégias
-"""
-)
+        duration = st.sidebar.slider('Duração da Ligação (segundos)', 0, 5000, int(p.get("duration", 300)))
+        campaign = st.sidebar.slider('Nº de Contatos na Campanha', 1, 63, int(p.get("campaign", 2)))
+        pdays = st.sidebar.slider('Dias Desde Último Contato (pdays)', -1, 871, int(p.get("pdays", -1)))
+        previous = st.sidebar.slider('Nº de Contatos Anteriores', 0, 275, int(p.get("previous", 0)))
+        
+        data = {
+            'age': age, 'job': job, 'marital': marital, 'education': education, 
+            'default': default, 'balance': balance, 'housing': housing, 'loan': loan,
+            'day_of_week': day_of_week, 'month': month, 'duration': duration, 
+            'campaign': campaign, 'pdays': pdays, 'previous': previous
+        }
+        return pd.DataFrame(data, index=[0])
+
+    input_df = user_input_features()
+
+    if st.sidebar.button('Executar Previsão'):
+        prediction = model_pipeline.predict(input_df)[0]
+        prediction_proba = model_pipeline.predict_proba(input_df)[0][1]
+
+        st.subheader("Resultado da Previsão")
+        col1, col2 = st.columns(2)
+        with col1:
+            if prediction == 1:
+                st.success("✅ **Previsão:** Cliente propenso a aderir ao depósito.")
+            else:
+                st.error("❌ **Previsão:** Cliente não propenso a aderir ao depósito.")
+        with col2:
+            st.info(f"💡 **Probabilidade de Adesão:** {prediction_proba*100:.2f}%")
+
+    st.markdown('<h2 class="section-header">⚙️ Painel de Performance do Modelo Random Forest</h2>', unsafe_allow_html=True)
+    y_pred = model_pipeline.predict(X_test)
+    y_pred_proba = model_pipeline.predict_proba(X_test)[:, 1]
+
+    c1, c2 = st.columns(2)
+    c3, c4 = st.columns(2)
+
+    with c1:
+        st.subheader("Matriz de Confusão")
+        cm = confusion_matrix(y_test, y_pred)
+        fig_cm, ax = plt.subplots()
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', ax=ax, xticklabels=['Não Aderiu', 'Aderiu'], yticklabels=['Não Aderiu', 'Aderiu'])
+        ax.set_xlabel("Previsto")
+        ax.set_ylabel("Real")
+        st.pyplot(fig_cm)
+
+    with c2:
+        st.subheader("Importância das Features")
+        try:
+            ohe = model_pipeline.named_steps['preprocessor'].named_transformers_['cat']
+            cat_feature_names = list(ohe.get_feature_names_out(X_train.select_dtypes(include=['object']).columns))
+            num_feature_names = list(X_train.select_dtypes(include=['int64', 'float64']).columns)
+            all_feature_names = num_feature_names + cat_feature_names
+            importances = model_pipeline.named_steps['classifier'].feature_importances_
+            feature_importance_df = pd.DataFrame({'Importância': importances}, index=all_feature_names).sort_values(by='Importância', ascending=False)
+            top_features = feature_importance_df.head(10)
+            fig_importance = px.bar(top_features, x='Importância', y=top_features.index, orientation='h', title='Top 10 Features Mais Influentes')
+            st.plotly_chart(fig_importance, use_container_width=True)
+        except Exception as e:
+            st.warning(f"Não foi possível gerar o gráfico de importância das features. Erro: {e}")
+
+    with c3:
+        st.subheader("Curva ROC e AUC")
+        fpr, tpr, _ = roc_curve(y_test, y_pred_proba)
+        roc_auc = auc(fpr, tpr)
+        fig_roc, ax_roc = plt.subplots()
+        ax_roc.plot(fpr, tpr, color='darkorange', lw=2, label=f'Curva ROC (AUC = {roc_auc:0.2f})')
+        ax_roc.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
+        ax_roc.set_xlim((0.0, 1.0))
+        ax_roc.set_ylim((0.0, 1.05))
+        ax_roc.set_xlabel('Taxa de Falsos Positivos')
+        ax_roc.set_ylabel('Taxa de Verdadeiros Positivos')
+        ax_roc.set_title('Característica de Operação do Receptor')
+        ax_roc.legend(loc="lower right")
+        st.pyplot(fig_roc)
+
+    with c4:
+        st.subheader("Distribuição das Probabilidades")
+        proba_df = pd.DataFrame({'Probabilidade': y_pred_proba, 'Classe Real': y_test.map({0: 'Não Aderiu', 1: 'Aderiu'})})
+        fig_proba = px.histogram(proba_df, x='Probabilidade', color='Classe Real', marginal="box", nbins=50, title="Distribuição das Probabilidades por Classe", color_discrete_map={'Não Aderiu': COLORS['danger'], 'Aderiu': COLORS['success']})
+        st.plotly_chart(fig_proba, use_container_width=True)
